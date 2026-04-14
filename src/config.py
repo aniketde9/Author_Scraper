@@ -79,6 +79,7 @@ class PipelineConfig(BaseModel):
     max_followers: int = 5000
     min_score_to_keep: int = 5
     categories: list[str] = Field(default_factory=list)
+    non_fiction_gate_enabled: bool = True
     non_fiction_include_keywords: list[str] = Field(
         default_factory=lambda: ["non fiction", "non-fiction", "nonfiction"]
     )

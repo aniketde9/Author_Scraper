@@ -50,11 +50,19 @@ def score_lead(vl: VerifiedLead, scoring: ScoringConfig) -> tuple[int, float, st
     band = _visibility_band(e.follower_count)
     total += getattr(scoring.visibility, band.value)
 
+    if e.paying_capacity_score >= 55.0:
+        total += 3
+        notes.append("paying_capacity_high")
+    elif e.paying_capacity_score >= 30.0:
+        total += 1
+        notes.append("paying_capacity_mid")
+
     total = min(total, 8)
 
     conf = min(
         100.0,
         e.fuzzy_title_score
+        + (e.paying_capacity_score * 0.25)
         + (20.0 if vl.amazon_review_verified else 0.0)
         + (15.0 if vl.linkedin_verified else 0.0)
         + (10.0 if vl.contact_verified else 0.0)
@@ -99,6 +107,9 @@ def score_and_export(verified: list[VerifiedLead]) -> list[ScoredLead]:
                 "contact_method": e.contact_method or "",
                 "email_or_website": email_or,
                 "follower_count": e.follower_count if e.follower_count is not None else "",
+                "paying_capacity_score": e.paying_capacity_score,
+                "paying_capacity_tier": e.paying_capacity_tier,
+                "paying_capacity_summary": e.paying_capacity_summary,
                 "score": sl.score,
                 "confidence_score": round(sl.confidence_score, 2),
                 "notes": sl.notes,

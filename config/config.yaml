@@ -1,7 +1,7 @@
 amazon_scraper:
   mode: "playwright"
   amazon_base: "https://www.amazon.com"
-  max_pages_per_pool: 15
+  max_pages_per_pool: 10
   delay_between_pages: 12
   delay_between_requests: 3.0
   use_headless: true
@@ -16,12 +16,13 @@ linkdapi:
   geo_urn_usa: "103644278"
 
 pipeline:
-  pool_a_date_range_months: [15, 24]
-  pool_b_preorder_days: 30
-  review_threshold_a: [10, 40]
-  review_threshold_b: [0, 5]
+  pool_a_date_range_months: [12, 36]
+  pool_b_preorder_days: 60
+  review_threshold_a: [10, 120]
+  review_threshold_b: [0, 20]
   max_followers: 5000
   min_score_to_keep: 5
+  non_fiction_gate_enabled: false
   non_fiction_include_keywords:
     - "non fiction"
     - "non-fiction"
@@ -40,9 +41,8 @@ pipeline:
     - "paranormal"
     - "dystopian"
   categories:
-    - "Business & Money"
-    - "Self-Help"
     - "Leadership & Mentoring"
+    - "Self-Help"
     - "Entrepreneurship"
 
 scoring:

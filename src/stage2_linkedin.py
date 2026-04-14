@@ -1,4 +1,4 @@
-"""Stage 2: LinkdAPI enrichment + two-factor fuzzy matching."""
+"""Stage 2: LinkdAPI enrichment + paying-capacity analysis (no legacy filters)."""
 
 from __future__ import annotations
 
@@ -10,85 +10,19 @@ import structlog
 from src.config import get_settings_bundle, load_env_settings, merge_keys_into_bundle
 from src.models import AmazonBook, EnrichedLead, ProfessionTier
 from src.run_report import get_report
-from src.utils.fuzzy_match import (
-    book_title_in_profile,
-    headline_has_profession_keyword,
-    headline_looks_creator,
-)
+from src.utils.fuzzy_match import book_title_in_profile
 from src.utils.linkdapi_client import LinkdAPIWrapper
+from src.utils.paying_capacity import analyze_paying_capacity
 
 log = structlog.get_logger(__name__)
 
-FUZZY_TITLE_MIN = 62.0
 
-US_HINTS = (
-    "united states",
-    "usa",
-    "u.s.",
-    "u.s.a.",
-    "texas",
-    "california",
-    "florida",
-    "new york",
-    "illinois",
-    "pennsylvania",
-    "ohio",
-    "georgia",
-    "north carolina",
-    "michigan",
-    "new jersey",
-    "virginia",
-    "washington",
-    "arizona",
-    "massachusetts",
-    "tennessee",
-    "indiana",
-    "missouri",
-    "maryland",
-    "colorado",
-    "minnesota",
-    "wisconsin",
-    "south carolina",
-    "alabama",
-    "louisiana",
-    "kentucky",
-    "oregon",
-    "oklahoma",
-    "connecticut",
-    "utah",
-    "iowa",
-    "nevada",
-    "arkansas",
-    "mississippi",
-    "kansas",
-    "new mexico",
-    "nebraska",
-    "idaho",
-    "west virginia",
-    "hawaii",
-    "new hampshire",
-    "maine",
-    "montana",
-    "rhode island",
-    "delaware",
-    "south dakota",
-    "north dakota",
-    "alaska",
-    "vermont",
-    "wyoming",
-    "district of columbia",
-)
-
-
-def _is_us_location(location: str | None) -> bool:
-    if not location:
-        return False
-    l = location.lower().strip()
-    if any(h in l for h in US_HINTS):
-        return True
-    if re.search(r",\s*([a-z]{2})\s*$", l) and len(l) < 80:
-        return True
-    return False
+def _sanitize_author_for_search(raw: str) -> str:
+    s = raw.strip()
+    if "|" in s:
+        s = s.split("|", 1)[0].strip()
+    s = re.sub(r"\s+", " ", s)
+    return s
 
 
 def _split_name(full: str) -> tuple[str, str]:
@@ -229,13 +163,13 @@ async def _followers_async(api: LinkdAPIWrapper, username: str) -> int | None:
 async def enrich_authors(raw_books: list[AmazonBook]) -> list[EnrichedLead]:
     bundle = merge_keys_into_bundle(get_settings_bundle(), load_env_settings())
     geo = bundle.linkdapi.geo_urn_usa
-    max_follow = bundle.pipeline.max_followers
     report = get_report()
     api = LinkdAPIWrapper(bundle.linkdapi.api_key)
     out: list[EnrichedLead] = []
 
     for book in raw_books:
-        primary_author = book.authors[0] if book.authors else "Unknown"
+        primary_author_raw = book.authors[0] if book.authors else "Unknown"
+        primary_author = _sanitize_author_for_search(primary_author_raw)
         first, last = _split_name(primary_author)
         try:
             resp = await api.search_people(
@@ -255,15 +189,9 @@ async def enrich_authors(raw_books: list[AmazonBook]) -> list[EnrichedLead]:
             report.record_discard("stage2", "no_search_hits", primary_author)
             continue
 
-        best: tuple[float, str | None, str | None, dict[str, Any]] | None = None
+        best: tuple[float, float, str | None, str | None, dict[str, Any]] | None = None
         for hit in hits[:8]:
             headline = _headline_from_hit(hit)
-            if not headline_has_profession_keyword(headline):
-                report.record_discard("stage2", "headline_gate", str(headline)[:80])
-                continue
-            if headline_looks_creator(headline):
-                report.record_discard("stage2", "creator_headline", str(headline)[:80])
-                continue
             username = _username_from_hit(hit)
             if not username:
                 continue
@@ -279,69 +207,70 @@ async def enrich_authors(raw_books: list[AmazonBook]) -> list[EnrichedLead]:
                 profile_obj = full["data"]
 
             blob = _flatten_profile_for_fuzzy(profile_obj)
-            score = book_title_in_profile(book.title, blob)
-            if score < FUZZY_TITLE_MIN:
-                report.record_discard("stage2", "fuzzy_title_low", f"{username}:{score:.0f}")
-                continue
-
+            title_match = book_title_in_profile(book.title, blob)
             loc, company = _extract_location_company(profile_obj, full if isinstance(full, dict) else None)
-            if not _is_us_location(loc):
-                report.record_discard("stage2", "non_us_location", str(loc))
-                continue
-
             followers = await _followers_async(api, username)
-            if followers is not None and followers >= max_follow:
-                report.record_discard("stage2", "high_followers", str(followers))
-                continue
+            tier = _classify_profession_tier(headline)
+
+            pay = analyze_paying_capacity(
+                headline=headline,
+                profile_blob=blob,
+                company=company,
+                follower_count=followers,
+                profession_tier=tier,
+            )
 
             email, website = _extract_contact(profile_obj)
             method = "email" if email else ("website" if website else "linkedin_dm")
-            tier = _classify_profession_tier(headline)
-            linkedin_url = f"https://www.linkedin.com/in/{username}/"
-            cand = (
-                score,
-                username,
-                headline,
-                {
-                    "profile": profile_obj,
-                    "full_response": full,
-                    "location": loc,
-                    "company": company,
-                    "followers": followers,
-                    "email": email,
-                    "website": website,
-                    "method": method,
-                    "tier": tier,
-                    "blob": blob,
-                },
-            )
-            if best is None or score > best[0]:
+
+            meta = {
+                "profile": profile_obj,
+                "full_response": full,
+                "location": loc,
+                "company": company,
+                "followers": followers,
+                "email": email,
+                "website": website,
+                "method": method,
+                "tier": tier,
+                "blob": blob,
+                "pay": pay,
+                "title_match": title_match,
+            }
+            cand = (pay.score, title_match, username, headline, meta)
+            if best is None or cand[0] > best[0] or (cand[0] == best[0] and cand[1] > best[1]):
                 best = cand
 
         if best is None:
-            report.record_discard("stage2", "no_match_after_filters", primary_author)
+            report.record_discard("stage2", "no_profile_for_hits", primary_author)
             continue
 
-        _score, username, headline, meta = best
+        _pay_score, _title_match, username, headline, meta = best
+        pay = meta["pay"]
+        notes_parts = pay.factors + [f"title_match={meta['title_match']:.0f}"]
         out.append(
             EnrichedLead(
                 book=book,
                 linkedin_url=f"https://www.linkedin.com/in/{username}/",
                 linkedin_username=username,
-                full_name=primary_author,
+                full_name=primary_author_raw,
                 headline=headline,
                 location=meta.get("location"),
                 company=meta.get("company"),
                 follower_count=meta.get("followers"),
                 profession_tier=meta.get("tier") or ProfessionTier.NONE,
                 profile_text_blob=str(meta.get("blob") or ""),
-                fuzzy_title_score=float(_score),
+                fuzzy_title_score=float(meta["title_match"]),
                 contact_email=meta.get("email"),
                 contact_website=meta.get("website"),
                 contact_method=str(meta.get("method")),
                 raw_profile=meta.get("full_response")
                 if isinstance(meta.get("full_response"), dict)
                 else {},
+                notes="; ".join(notes_parts),
+                paying_capacity_score=pay.score,
+                paying_capacity_tier=pay.tier,
+                paying_capacity_summary=pay.summary,
             )
         )
 

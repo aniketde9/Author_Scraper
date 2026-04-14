@@ -56,6 +56,9 @@ class EnrichedLead(BaseModel):
     contact_method: str | None = None
     raw_profile: dict[str, Any] = Field(default_factory=dict)
     notes: str | None = None
+    paying_capacity_score: float = 0.0
+    paying_capacity_tier: str = ""
+    paying_capacity_summary: str = ""
 
 
 class VerifiedLead(BaseModel):

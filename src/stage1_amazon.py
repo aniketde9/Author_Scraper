@@ -280,6 +280,7 @@ async def scrape_all_pools() -> list[AmazonBook]:
     candidates: list[AmazonBook] = []
     non_fic_include = p.non_fiction_include_keywords
     non_fic_exclude = p.non_fiction_exclude_keywords
+    non_fiction_gate_enabled = p.non_fiction_gate_enabled
 
     async with amazon_browser_session(amz) as (_browser, page):
         for category in p.categories:
@@ -314,14 +315,15 @@ async def scrape_all_pools() -> list[AmazonBook]:
                     if asin in seen_asin:
                         continue
                     preview_text = f"{row.get('title', '')} {row.get('raw_snippet', '')}"
-                    if not _passes_non_fiction_gate(
-                        preview_text,
-                        non_fic_include,
-                        non_fic_exclude,
-                        require_include=False,
-                    ):
-                        report.record_discard("stage1", "non_fiction_reject_preview", asin)
-                        continue
+                    if non_fiction_gate_enabled:
+                        if not _passes_non_fiction_gate(
+                            preview_text,
+                            non_fic_include,
+                            non_fic_exclude,
+                            require_include=False,
+                        ):
+                            report.record_discard("stage1", "non_fiction_reject_preview", asin)
+                            continue
                     rc = row.get("review_count")
                     if rc is None:
                         continue
@@ -339,15 +341,16 @@ async def scrape_all_pools() -> list[AmazonBook]:
                         report.record_discard("stage1", "detail_fetch_failed", asin)
                         seen_asin.discard(asin)
                         continue
-                    if not _passes_non_fiction_gate(
-                        dhtml,
-                        non_fic_include,
-                        non_fic_exclude,
-                        require_include=True,
-                    ):
-                        report.record_discard("stage1", "non_fiction_reject_detail", asin)
-                        seen_asin.discard(asin)
-                        continue
+                    if non_fiction_gate_enabled:
+                        if not _passes_non_fiction_gate(
+                            dhtml,
+                            non_fic_include,
+                            non_fic_exclude,
+                            require_include=True,
+                        ):
+                            report.record_discard("stage1", "non_fiction_reject_detail", asin)
+                            seen_asin.discard(asin)
+                            continue
                     pub, is_pre, detail_rc = parse_product_detail(dhtml)
                     final_rc = detail_rc if detail_rc is not None else rc
                     pool, pre_flag = _classify_book(
