@@ -18,11 +18,12 @@ from bs4 import BeautifulSoup
 from src.config import merge_keys_into_bundle, get_settings_bundle, load_env_settings
 from src.models import AmazonBook, Pool
 from src.run_report import get_report
-from src.utils.playwright_amazon import amazon_browser_session, fetch_html_async
+from src.utils.playwright_amazon import amazon_browser_session, fetch_html_async, fetch_search_html_async
 
 log = structlog.get_logger(__name__)
 
 REVIEW_RE = re.compile(r"([\d,]+)\s*(?:global\s+)?ratings?", re.I)
+REVIEW_COUNT_FALLBACK_RE = re.compile(r"\(([\d,]+)\)")
 MONTHS_RE = re.compile(
     r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}",
     re.I,
@@ -45,10 +46,12 @@ def _passes_non_fiction_gate(
     text: str,
     include_keywords: list[str],
     exclude_keywords: list[str],
+    *,
+    require_include: bool,
 ) -> bool:
     low = text.lower()
     has_include = any(_token_match(low, k.lower()) for k in include_keywords if k.strip())
-    if not has_include:
+    if require_include and not has_include:
         return False
     # Reject fiction-like terms but allow explicit non-fiction spellings.
     for word in exclude_keywords:
@@ -93,9 +96,12 @@ def _parse_us_date(text: str) -> date | None:
 
 def _extract_review_count_from_text(blob: str) -> int | None:
     m = REVIEW_RE.search(blob)
-    if not m:
-        return None
-    return int(m.group(1).replace(",", ""))
+    if m:
+        return int(m.group(1).replace(",", ""))
+    m2 = REVIEW_COUNT_FALLBACK_RE.search(blob)
+    if m2:
+        return int(m2.group(1).replace(",", ""))
+    return None
 
 
 def _search_url(amazon_base: str, category_keywords: str, page: int) -> str:
@@ -104,20 +110,47 @@ def _search_url(amazon_base: str, category_keywords: str, page: int) -> str:
     return f"{base}/s?k={k}&i=stripbooks&ref=sr_pg_{page}&page={page}"
 
 
+def _search_url_variants(amazon_base: str, keywords: str, page: int, *, sort_key: str) -> list[str]:
+    k = quote_plus(keywords)
+    base = amazon_base.rstrip("/")
+    variants = [
+        (
+            f"{base}/s?k={k}&i=stripbooks&rh=n%3A283155"
+            f"&s={sort_key}&ref=sr_pg_{page}&page={page}"
+        ),
+        f"{base}/s?k={k}&i=stripbooks&s={sort_key}&page={page}",
+        _search_url(base, keywords, page),
+    ]
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for u in variants:
+        if u not in seen:
+            ordered.append(u)
+            seen.add(u)
+    return ordered
+
+
 def parse_search_results(html: str, amazon_base: str) -> list[dict]:
     """Extract minimal fields from a search results page."""
     soup = BeautifulSoup(html, "html.parser")
     out: list[dict] = []
-    for card in soup.select('div[data-component-type="s-search-result"]'):
+    cards = soup.select('[data-component-type="s-search-result"]')
+    if not cards:
+        cards = soup.select(".s-result-item")
+    for card in cards:
         asin = card.get("data-asin") or ""
         if not asin or asin == "None":
             continue
         h2 = card.select_one("h2 a span")
+        if not h2:
+            h2 = card.select_one("a.a-link-normal.a-text-normal span")
+        if not h2:
+            h2 = card.select_one('a[class*="a-link-normal"] span')
         title = h2.get_text(strip=True) if h2 else ""
         if not title:
             continue
         authors: list[str] = []
-        for row in card.select(".a-row"):
+        for row in card.select(".a-row.a-size-base.a-color-secondary, .a-row"):
             t = row.get_text(" ", strip=True)
             if t.lower().startswith("by "):
                 rest = t[3:].strip()
@@ -127,8 +160,18 @@ def parse_search_results(html: str, amazon_base: str) -> list[dict]:
                         authors.append(p)
                 break
         blob = card.get_text(" ", strip=True)
-        rc = _extract_review_count_from_text(blob)
-        url = f"{amazon_base.rstrip('/')}/dp/{asin}"
+        rc = None
+        review_hint = card.select_one(".a-size-base.s-underline-text")
+        if review_hint:
+            rc = _extract_review_count_from_text(review_hint.get_text(" ", strip=True))
+        if rc is None:
+            rc = _extract_review_count_from_text(blob)
+        link_el = card.select_one("h2 a") or card.select_one("a.a-link-normal.a-text-normal")
+        if link_el and link_el.get("href"):
+            href = link_el.get("href") or ""
+            url = href if href.startswith("http") else f"{amazon_base.rstrip('/')}{href}"
+        else:
+            url = f"{amazon_base.rstrip('/')}/dp/{asin}"
         out.append(
             {
                 "asin": asin,
@@ -212,6 +255,20 @@ async def _fetch_with_retries(page, url: str, amz_cfg, label: str) -> str | None
     return None
 
 
+async def _fetch_search_with_retries(page, url: str, amz_cfg, label: str) -> tuple[str | None, str]:
+    last_err: Exception | None = None
+    for attempt in range(FETCH_RETRIES):
+        try:
+            html, state = await fetch_search_html_async(page, url, amz_cfg)
+            return html, state
+        except Exception as e:
+            last_err = e
+            log.warning("amazon_search_fetch_retry", label=label, attempt=attempt + 1, error=str(e))
+            await asyncio.sleep(2**attempt)
+    log.error("amazon_search_fetch_failed", label=label, error=str(last_err))
+    return None, "fetch_failed"
+
+
 async def scrape_all_pools() -> list[AmazonBook]:
     bundle = merge_keys_into_bundle(get_settings_bundle(), load_env_settings())
     amz = bundle.amazon_scraper
@@ -226,24 +283,44 @@ async def scrape_all_pools() -> list[AmazonBook]:
 
     async with amazon_browser_session(amz) as (_browser, page):
         for category in p.categories:
-            kw = f"{category} non-fiction book author"
+            kw_pool_a = [f"{category} {k} book author" for k in amz.pool_a_keywords]
+            kw_pool_b = [f"{category} {k} book author" for k in amz.pool_b_keywords]
+            search_plans = [(kw, "review-rank") for kw in kw_pool_a] + [(kw, "date-desc-rank") for kw in kw_pool_b]
             for page_num in range(1, amz.max_pages_per_pool + 1):
-                url = _search_url(base, kw, page_num)
-                html = await _fetch_with_retries(page, url, amz, f"{category}_p{page_num}")
-                if html is None:
-                    report.record_discard("stage1", "search_fetch_failed", f"{category} p{page_num}")
-                    continue
-                rows = parse_search_results(html, base)
+                rows: list[dict] = []
+                saw_block = False
+                for kw, sort_key in search_plans:
+                    variants = _search_url_variants(base, kw, page_num, sort_key=sort_key)
+                    for variant_idx, url in enumerate(variants, start=1):
+                        html, state = await _fetch_search_with_retries(
+                            page, url, amz, f"{category}_p{page_num}_v{variant_idx}"
+                        )
+                        if html is None:
+                            continue
+                        if state == "blocked_or_captcha":
+                            saw_block = True
+                        parsed = parse_search_results(html, base)
+                        if parsed:
+                            rows = parsed
+                            break
+                    if rows:
+                        break
                 if not rows:
-                    report.record_discard("stage1", "no_search_results", f"{category} p{page_num}")
+                    reason = "search_blocked_or_captcha" if saw_block else "search_dom_no_cards"
+                    report.record_discard("stage1", reason, f"{category} p{page_num}")
                     break
                 for row in rows:
                     asin = row["asin"]
                     if asin in seen_asin:
                         continue
                     preview_text = f"{row.get('title', '')} {row.get('raw_snippet', '')}"
-                    if not _passes_non_fiction_gate(preview_text, non_fic_include, non_fic_exclude):
-                        report.record_discard("stage1", "not_non_fiction", asin)
+                    if not _passes_non_fiction_gate(
+                        preview_text,
+                        non_fic_include,
+                        non_fic_exclude,
+                        require_include=False,
+                    ):
+                        report.record_discard("stage1", "non_fiction_reject_preview", asin)
                         continue
                     rc = row.get("review_count")
                     if rc is None:
@@ -262,8 +339,13 @@ async def scrape_all_pools() -> list[AmazonBook]:
                         report.record_discard("stage1", "detail_fetch_failed", asin)
                         seen_asin.discard(asin)
                         continue
-                    if not _passes_non_fiction_gate(dhtml, non_fic_include, non_fic_exclude):
-                        report.record_discard("stage1", "not_non_fiction_detail", asin)
+                    if not _passes_non_fiction_gate(
+                        dhtml,
+                        non_fic_include,
+                        non_fic_exclude,
+                        require_include=True,
+                    ):
+                        report.record_discard("stage1", "non_fiction_reject_detail", asin)
                         seen_asin.discard(asin)
                         continue
                     pub, is_pre, detail_rc = parse_product_detail(dhtml)

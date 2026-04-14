@@ -52,6 +52,18 @@ class AmazonScraperConfig(BaseModel):
     viewport_width_range: tuple[int, int] = (1280, 1440)
     viewport_height_range: tuple[int, int] = (820, 980)
     human_scroll_steps: int = 4
+    pool_a_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "leadership",
+            "entrepreneurship",
+            "business strategy",
+            "self help",
+            "founder mindset",
+        ]
+    )
+    pool_b_keywords: list[str] = Field(
+        default_factory=lambda: ["pre-order", "coming soon", "launching soon"]
+    )
 
 
 class LinkdAPIConfig(BaseModel):

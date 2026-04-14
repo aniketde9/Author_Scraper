@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -58,6 +59,34 @@ async def fetch_html_async(page: Page, url: str, cfg: AmazonScraperConfig) -> st
     await asyncio.sleep(random.uniform(2.5, 4.0))
     await humanize_page_async(page, cfg)
     return await page.content()
+
+
+def _search_page_state(html: str) -> str:
+    low = html.lower()
+    if 'data-component-type="s-search-result"' in low:
+        return "has_results"
+    if re.search(r"captcha|enter the characters you see below", low):
+        return "blocked_or_captcha"
+    if re.search(r"no results for|did not match any products", low):
+        return "empty_results"
+    return "unknown"
+
+
+async def fetch_search_html_async(page: Page, url: str, cfg: AmazonScraperConfig) -> tuple[str, str]:
+    """Fetch Amazon search page and return (html, state)."""
+    await page.goto(url, wait_until="domcontentloaded")
+    try:
+        await page.wait_for_selector(
+            '[data-component-type="s-search-result"], .s-result-item, #captchacharacters',
+            timeout=15000,
+        )
+    except Exception:
+        # It's okay if nothing matched quickly; fallback to DOM inspection.
+        pass
+    await asyncio.sleep(random.uniform(2.5, 4.0))
+    await humanize_page_async(page, cfg)
+    html = await page.content()
+    return html, _search_page_state(html)
 
 
 @asynccontextmanager

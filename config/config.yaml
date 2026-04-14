@@ -1,13 +1,15 @@
 amazon_scraper:
   mode: "playwright"
   amazon_base: "https://www.amazon.com"
-  max_pages_per_pool: 12
-  delay_between_pages: 8
-  delay_between_requests: 2.5
+  max_pages_per_pool: 15
+  delay_between_pages: 12
+  delay_between_requests: 3.0
   use_headless: true
   viewport_width_range: [1280, 1440]
   viewport_height_range: [820, 980]
   human_scroll_steps: 4
+  pool_a_keywords: ["leadership", "entrepreneurship", "business strategy", "self help", "founder mindset"]
+  pool_b_keywords: ["pre-order", "coming soon", "launching soon"]
 
 linkdapi:
   api_key: ""
