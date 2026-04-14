@@ -1,0 +1,58 @@
+amazon_scraper:
+  mode: "playwright"
+  amazon_base: "https://www.amazon.com"
+  max_pages_per_pool: 12
+  delay_between_pages: 8
+  delay_between_requests: 2.5
+  use_headless: true
+  viewport_width_range: [1280, 1440]
+  viewport_height_range: [820, 980]
+  human_scroll_steps: 4
+
+linkdapi:
+  api_key: ""
+  geo_urn_usa: "103644278"
+
+pipeline:
+  pool_a_date_range_months: [15, 24]
+  pool_b_preorder_days: 30
+  review_threshold_a: [10, 40]
+  review_threshold_b: [0, 5]
+  max_followers: 5000
+  min_score_to_keep: 5
+  non_fiction_include_keywords:
+    - "non fiction"
+    - "non-fiction"
+    - "nonfiction"
+  non_fiction_exclude_keywords:
+    - "fiction"
+    - "novel"
+    - "romance"
+    - "fantasy"
+    - "science fiction"
+    - "sci-fi"
+    - "thriller"
+    - "mystery"
+    - "young adult"
+    - "ya"
+    - "paranormal"
+    - "dystopian"
+  categories:
+    - "Business & Money"
+    - "Self-Help"
+    - "Leadership & Mentoring"
+    - "Entrepreneurship"
+
+scoring:
+  profession:
+    ceo_founder_investor: 3
+    vp_cto_doctor_engineer: 2
+    other_high_income: 1
+  reviews:
+    10_20: 2
+    21_40: 1
+  location: 1
+  visibility:
+    low: 2
+    medium: 1
+    high: 0
