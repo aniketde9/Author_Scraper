@@ -12,6 +12,12 @@ from src.models import AmazonBook, EnrichedLead, ProfessionTier
 from src.run_report import get_report
 from src.utils.fuzzy_match import book_title_in_profile
 from src.utils.linkdapi_client import LinkdAPIWrapper
+from src.utils.linkdapi_hits import (
+    headline_from_hit,
+    normalize_search_people,
+    split_author_name,
+    username_from_hit,
+)
 from src.utils.paying_capacity import analyze_paying_capacity
 
 log = structlog.get_logger(__name__)
@@ -23,13 +29,6 @@ def _sanitize_author_for_search(raw: str) -> str:
         s = s.split("|", 1)[0].strip()
     s = re.sub(r"\s+", " ", s)
     return s
-
-
-def _split_name(full: str) -> tuple[str, str]:
-    parts = [p for p in re.split(r"\s+", full.strip()) if p]
-    if len(parts) >= 2:
-        return parts[0], parts[-1]
-    return (parts[0] if parts else "", "")
 
 
 def _classify_profession_tier(headline: str | None) -> ProfessionTier:
@@ -56,41 +55,6 @@ def _classify_profession_tier(headline: str | None) -> ProfessionTier:
     if any(x in h for x in ("business owner", "president", "owner")):
         return ProfessionTier.OTHER_HIGH_INCOME
     return ProfessionTier.NONE
-
-
-def _normalize_search_people(resp: Any) -> list[dict[str, Any]]:
-    if not isinstance(resp, dict):
-        return []
-    data = resp.get("data")
-    if isinstance(data, dict):
-        people = data.get("people") or data.get("elements")
-        if isinstance(people, list):
-            return [p for p in people if isinstance(p, dict)]
-    people = resp.get("people") or resp.get("elements")
-    if isinstance(people, list):
-        return [p for p in people if isinstance(p, dict)]
-    return []
-
-
-def _username_from_hit(hit: dict[str, Any]) -> str | None:
-    for key in ("publicIdentifier", "username", "vanityName", "profileId"):
-        v = hit.get(key)
-        if isinstance(v, str) and v and " " not in v:
-            return v.split("/")[-1]
-    nav = hit.get("navigationUrl") or hit.get("link") or ""
-    if isinstance(nav, str) and "/in/" in nav:
-        m = re.search(r"/in/([^/?#]+)/?", nav)
-        if m:
-            return m.group(1)
-    return None
-
-
-def _headline_from_hit(hit: dict[str, Any]) -> str | None:
-    for key in ("headline", "title", "subtitle", "primarySubtitle"):
-        v = hit.get(key)
-        if isinstance(v, str) and v.strip():
-            return v.strip()
-    return None
 
 
 def _flatten_profile_for_fuzzy(profile: Any) -> str:
@@ -170,7 +134,7 @@ async def enrich_authors(raw_books: list[AmazonBook]) -> list[EnrichedLead]:
     for book in raw_books:
         primary_author_raw = book.authors[0] if book.authors else "Unknown"
         primary_author = _sanitize_author_for_search(primary_author_raw)
-        first, last = _split_name(primary_author)
+        first, last = split_author_name(primary_author)
         try:
             resp = await api.search_people(
                 first_name=first or None,
@@ -184,15 +148,15 @@ async def enrich_authors(raw_books: list[AmazonBook]) -> list[EnrichedLead]:
             report.record_discard("stage2", "search_failed", primary_author)
             continue
 
-        hits = _normalize_search_people(resp)
+        hits = normalize_search_people(resp)
         if not hits:
             report.record_discard("stage2", "no_search_hits", primary_author)
             continue
 
         best: tuple[float, float, str | None, str | None, dict[str, Any]] | None = None
         for hit in hits[:8]:
-            headline = _headline_from_hit(hit)
-            username = _username_from_hit(hit)
+            headline = headline_from_hit(hit)
+            username = username_from_hit(hit)
             if not username:
                 continue
             try:

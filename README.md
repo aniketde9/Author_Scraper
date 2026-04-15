@@ -36,6 +36,17 @@ Force re-run a stage and invalidate downstream artifacts:
 python -m src.main --stage 1 --force
 ```
 
+### Enrich a standalone author CSV (LinkdAPI)
+
+If you have `data/amazon_books_titles_authors.csv` (`asin`, `book_title`, `authors`), run LinkdAPI enrichment to `data/amazon_books_linkedin.csv`:
+
+```bash
+python -m src.csv_linkedin --dry-run
+python -m src.csv_linkedin --force
+```
+
+Requires `LINKDAPI_KEY`. Use `--force` if an older output file lacks columns `urn`, `headline`, `email`, and `website`.
+
 ## Outputs
 
 | Artifact | Description |
@@ -44,6 +55,7 @@ python -m src.main --stage 1 --force
 | `data/linkedin_matched.json` | Stage 2 — `EnrichedLead` rows |
 | `data/verified_leads.json` | Stage 3 — deduped `VerifiedLead` rows |
 | `data/leads_final.csv` | Stage 4 — up to 10 ranked leads |
+| `data/amazon_books_linkedin.csv` | Optional — `python -m src.csv_linkedin` (LinkdAPI usernames from `amazon_books_titles_authors.csv`) |
 | `logs/run_*.log` | Structured log for each invocation |
 | `logs/summary_*.html` | HTML summary with counts and discard reasons |
 
