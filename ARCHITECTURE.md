@@ -51,6 +51,7 @@ One-time: `playwright install chromium`
 
 ## Configuration (`amazon_scraper`)
 
+- `raw_books_json`: basename under `data/` for Stage 1 JSON (default `amazon_raw.json`, replaced when Stage 1 runs)
 - `mode`: `"playwright"` (only supported mode)
 - `max_pages_per_pool`, `delay_between_pages`, `delay_between_requests`
 - `use_headless`, `viewport_width_range`, `viewport_height_range`, `human_scroll_steps`

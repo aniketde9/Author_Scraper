@@ -54,16 +54,18 @@ class AmazonScraperConfig(BaseModel):
     human_scroll_steps: int = 4
     pool_a_keywords: list[str] = Field(
         default_factory=lambda: [
-            "leadership",
             "entrepreneurship",
-            "business strategy",
-            "self help",
-            "founder mindset",
+            "startup",
+            "founder",
+            "small business",
+            "scaling a business",
         ]
     )
     pool_b_keywords: list[str] = Field(
         default_factory=lambda: ["pre-order", "coming soon", "launching soon"]
     )
+    # Basename only; file is written under data/. JSON list of AmazonBook objects.
+    raw_books_json: str = "amazon_raw.json"
 
 
 class LinkdAPIConfig(BaseModel):

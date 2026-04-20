@@ -1,5 +1,7 @@
 amazon_scraper:
   mode: "playwright"
+  # Stage 1 writes data/<basename> — overwritten on each Stage 1 run (use --force to re-scrape)
+  raw_books_json: "amazon_raw.json"
   amazon_base: "https://www.amazon.com"
   max_pages_per_pool: 10
   delay_between_pages: 12
@@ -8,7 +10,8 @@ amazon_scraper:
   viewport_width_range: [1280, 1440]
   viewport_height_range: [820, 980]
   human_scroll_steps: 4
-  pool_a_keywords: ["leadership", "entrepreneurship", "business strategy", "self help", "founder mindset"]
+  # Narrow terms so searches stay entrepreneurship-themed (category is already Entrepreneurship)
+  pool_a_keywords: ["entrepreneurship", "startup", "founder", "small business", "scaling a business"]
   pool_b_keywords: ["pre-order", "coming soon", "launching soon"]
 
 linkdapi:
@@ -41,8 +44,6 @@ pipeline:
     - "paranormal"
     - "dystopian"
   categories:
-    - "Leadership & Mentoring"
-    - "Self-Help"
     - "Entrepreneurship"
 
 scoring:

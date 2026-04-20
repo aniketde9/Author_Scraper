@@ -51,7 +51,8 @@ Requires `LINKDAPI_KEY`. Use `--force` if an older output file lacks columns `ur
 
 | Artifact | Description |
 |----------|-------------|
-| `data/amazon_raw.json` | Stage 1 — parsed `AmazonBook` rows |
+| `data/amazon_raw.json` (config: `amazon_scraper.raw_books_json`) | Stage 1 — parsed `AmazonBook` rows |
+| `data/<stem>.meta.json` (e.g. `amazon_raw.meta.json`) | Stage 1 — fingerprint of search/filter config; if you change `config.yaml` and this no longer matches, Stage 1 re-scrapes automatically (unless you only have an old JSON with no meta — then it re-scrapes once). `--force` always re-scrapes. |
 | `data/linkedin_matched.json` | Stage 2 — `EnrichedLead` rows |
 | `data/verified_leads.json` | Stage 3 — deduped `VerifiedLead` rows |
 | `data/leads_final.csv` | Stage 4 — up to 10 ranked leads |

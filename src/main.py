@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+from pathlib import Path
 from typing import Optional
 
 import typer
 from dotenv import load_dotenv
 
-from src.config import _project_root, clear_settings_cache, get_settings_bundle, load_env_settings, merge_keys_into_bundle
+from src.config import (
+    SettingsBundle,
+    _project_root,
+    clear_settings_cache,
+    get_settings_bundle,
+    load_env_settings,
+    merge_keys_into_bundle,
+)
 from src.logger import setup_logging
 from src.models import AmazonBook, EnrichedLead, VerifiedLead
 from src.run_report import get_report, reset_report
@@ -17,14 +27,63 @@ from src.stage2_linkedin import enrich_authors
 from src.stage3_validation import validate_and_dedupe
 from src.stage4_scoring import score_and_export
 from src.utils.checkpoint import (
-    AMAZON_RAW,
     LINKEDIN_MATCHED,
     VERIFIED_LEADS,
+    amazon_raw_path,
     clear_downstream_after,
     load_list,
     save_list,
     should_skip_stage,
+    should_skip_stage1,
+    stage1_meta_path,
+    stage1_search_fingerprint,
+    write_stage1_checkpoint_meta,
 )
+
+
+def _sha256_prefix(path: Path, n: int = 16) -> str:
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return digest[:n]
+
+
+def _sync_stage1_report(
+    raw_books_file: Path,
+    *,
+    from_checkpoint: bool,
+    in_memory_count: int | None = None,
+) -> None:
+    """Set stage1_amazon count and notes from what is actually on disk."""
+    report = get_report()
+    if not raw_books_file.exists():
+        report.set_stage_count("stage1_amazon", 0)
+        report.extra_notes.append(
+            f"Stage 1: expected {raw_books_file} missing on disk (0 books). "
+            f"{'Loaded from checkpoint was skipped — file absent.' if from_checkpoint else 'Save may have failed.'}"
+        )
+        return
+    on_disk = load_list(raw_books_file, AmazonBook) or []
+    report.set_stage_count("stage1_amazon", len(on_disk))
+    prefix = _sha256_prefix(raw_books_file)
+    head = ", ".join(b.asin for b in on_disk[:5])
+    if from_checkpoint:
+        report.extra_notes.append(
+            f"Stage 1: checkpoint only (no scrape) — {raw_books_file.name}, "
+            f"{len(on_disk)} books on disk, sha256[:16]={prefix}. "
+            f"First ASINs: {head or '—'}. "
+            f"Sidecar {raw_books_file.stem}.meta.json matches current search config. "
+            "Discard table for this run is empty."
+        )
+        return
+    if in_memory_count is not None and len(on_disk) != in_memory_count:
+        report.extra_notes.append(
+            f"WARNING: Stage 1 in-memory books ({in_memory_count}) != books re-read from disk ({len(on_disk)})."
+        )
+    report.extra_notes.append(
+        f"Stage 1: scrape complete — wrote {raw_books_file.name}, "
+        f"{len(on_disk)} books on disk, sha256[:16]={prefix}. "
+        f"First ASINs: {head or '—'}. "
+        "Discards below are rejected candidates only, not the JSON contents."
+    )
 
 
 def _require_keys(stages: list[int]) -> None:
@@ -36,23 +95,53 @@ def _require_keys(stages: list[int]) -> None:
         raise typer.Exit(code=1)
 
 
-async def _run_stage1(force: bool) -> list[AmazonBook]:
-    if should_skip_stage(AMAZON_RAW, force):
-        loaded = load_list(AMAZON_RAW, AmazonBook) or []
-        typer.echo(f"Stage 1 skipped (checkpoint). Loaded {len(loaded)} books.")
+async def _run_stage1(force: bool, raw_books_file: Path, bundle: SettingsBundle) -> list[AmazonBook]:
+    skip = should_skip_stage1(raw_books_file, force, bundle)
+    if skip:
+        loaded = load_list(raw_books_file, AmazonBook) or []
+        _sync_stage1_report(raw_books_file, from_checkpoint=True)
+        typer.echo(
+            f"Stage 1 skipped — {raw_books_file.name} matches current search config "
+            f"({raw_books_file.stem}.meta.json). Loaded {len(loaded)} books. "
+            "Use --stage 1 --force to re-scrape anyway."
+        )
         return loaded
+
+    if force:
+        typer.echo("Stage 1: --force — running fresh Amazon scrape.")
+    elif raw_books_file.exists() and raw_books_file.stat().st_size > 0:
+        mp = stage1_meta_path(raw_books_file)
+        want = stage1_search_fingerprint(bundle)
+        if not mp.exists():
+            typer.echo(
+                "Stage 1: re-scraping — no .meta.json sidecar (first run after this update or meta removed).",
+            )
+        else:
+            try:
+                old = json.loads(mp.read_text(encoding="utf-8")).get("fingerprint")
+                if old != want:
+                    typer.echo(
+                        "Stage 1: re-scraping — config.yaml search/filter settings changed since last scrape.",
+                    )
+            except (OSError, json.JSONDecodeError):
+                typer.echo("Stage 1: re-scraping — could not read .meta.json.")
+
     books = await scrape_all_pools()
-    save_list(AMAZON_RAW, books)
-    typer.echo(f"Stage 1 complete: {len(books)} books checkpointed.")
+    save_list(raw_books_file, books)
+    write_stage1_checkpoint_meta(raw_books_file, bundle)
+    _sync_stage1_report(raw_books_file, from_checkpoint=False, in_memory_count=len(books))
+    typer.echo(f"Stage 1 complete: {len(books)} books checkpointed to {raw_books_file}.")
     return books
 
 
-async def _run_stage2(raw: Optional[list[AmazonBook]], force: bool) -> list[EnrichedLead]:
+async def _run_stage2(
+    raw: Optional[list[AmazonBook]], force: bool, raw_books_file: Path
+) -> list[EnrichedLead]:
     if should_skip_stage(LINKEDIN_MATCHED, force):
         loaded = load_list(LINKEDIN_MATCHED, EnrichedLead) or []
         typer.echo(f"Stage 2 skipped (checkpoint). Loaded {len(loaded)} leads.")
         return loaded
-    books = raw if raw is not None else load_list(AMAZON_RAW, AmazonBook) or []
+    books = raw if raw is not None else load_list(raw_books_file, AmazonBook) or []
     if not books:
         typer.echo("Stage 2: no Amazon books found. Run stage 1 first.", err=True)
         return []
@@ -86,15 +175,17 @@ def _run_stage4(verified: Optional[list[VerifiedLead]]) -> None:
     typer.echo(f"Stage 4 complete: exported {len(top)} rows to data/leads_final.csv.")
 
 
-async def _run_stages_async(stages: list[int], force: bool) -> None:
+async def _run_stages_async(
+    stages: list[int], force: bool, raw_books_file: Path, bundle: SettingsBundle
+) -> None:
     raw: Optional[list[AmazonBook]] = None
     enriched: Optional[list[EnrichedLead]] = None
     verified: Optional[list[VerifiedLead]] = None
 
     if 1 in stages:
-        raw = await _run_stage1(force)
+        raw = await _run_stage1(force, raw_books_file, bundle)
     if 2 in stages:
-        enriched = await _run_stage2(raw, force)
+        enriched = await _run_stage2(raw, force, raw_books_file)
     if 3 in stages:
         verified = _run_stage3(enriched, force)
     if 4 in stages:
@@ -120,13 +211,14 @@ def main(
 
     stages = [1, 2, 3, 4] if all_stages else [int(stage)]
     _require_keys(stages)
-    merge_keys_into_bundle(get_settings_bundle(), load_env_settings())
+    bundle = merge_keys_into_bundle(get_settings_bundle(), load_env_settings())
+    raw_books_file = amazon_raw_path(bundle.amazon_scraper)
 
     for s in stages:
         if force:
             clear_downstream_after(s)
 
-    asyncio.run(_run_stages_async(stages, force))
+    asyncio.run(_run_stages_async(stages, force, raw_books_file, bundle))
 
     summary_path = get_report().write_html(_project_root(), log_path=str(log_path))
     typer.echo(f"Summary written to {summary_path}")

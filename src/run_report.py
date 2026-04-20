@@ -33,6 +33,11 @@ class RunReport:
         )
         notes = "".join(f"<li>{escape(n)}</li>" for n in self.extra_notes)
         log_line = f"<p>Log file: {escape(log_path or '')}</p>" if log_path else ""
+        discard_preamble = (
+            "<p><em>Each discard row is a candidate that failed a filter during scraping "
+            "(reviews, pool/date, non-fiction gate, etc.). Those ASINs are not in the Stage 1 "
+            "<code>amazon_raw</code> JSON; the JSON only lists books that passed all Stage 1 rules.</em></p>"
+        )
         return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Pipeline summary</title></head>
 <body>
@@ -43,6 +48,7 @@ class RunReport:
 <table border="1" cellpadding="4"><thead><tr><th>Stage</th><th>Count</th></tr></thead>
 <tbody>{sc or "<tr><td colspan='2'>No counts</td></tr>"}</tbody></table>
 <h2>Discards (aggregated)</h2>
+{discard_preamble}
 <table border="1" cellpadding="4"><thead><tr><th>Reason</th><th>Count</th></tr></thead>
 <tbody>{rows or "<tr><td colspan='2'>None recorded</td></tr>"}</tbody></table>
 <h2>Notes</h2>

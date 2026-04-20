@@ -385,5 +385,4 @@ async def scrape_all_pools() -> list[AmazonBook]:
                 await asyncio.sleep(amz.delay_between_pages)
 
     log.info("stage1_complete", total=len(candidates))
-    report.set_stage_count("stage1_amazon", len(candidates))
     return candidates
