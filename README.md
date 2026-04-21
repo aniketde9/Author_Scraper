@@ -28,7 +28,14 @@ Run a single stage (earlier stages load from checkpoint when present):
 
 ```bash
 python -m src.main --stage 2
+python -m src.main --stage 2.5
+python -m src.main --stage 4 --stage4-use-stage25-input
 ```
+
+Recommended stage flows:
+
+- Standard validated path: `2 -> 3 -> 4`
+- Fast scoring path (skip stage 3 validation): `2 -> 2.5 -> 4 --stage4-use-stage25-input`
 
 Force re-run a stage and invalidate downstream artifacts:
 
@@ -54,8 +61,29 @@ Requires `LINKDAPI_KEY`. Use `--force` if an older output file lacks columns `ur
 | `data/amazon_raw.json` (config: `amazon_scraper.raw_books_json`) | Stage 1 — parsed `AmazonBook` rows |
 | `data/<stem>.meta.json` (e.g. `amazon_raw.meta.json`) | Stage 1 — fingerprint of search/filter config; if you change `config.yaml` and this no longer matches, Stage 1 re-scrapes automatically (unless you only have an old JSON with no meta — then it re-scrapes once). `--force` always re-scrapes. |
 | `data/linkedin_matched.json` | Stage 2 — `EnrichedLead` rows |
+| `data/verified_leads_stage25.json` | Stage 2.5 — compiled `VerifiedLead`-shape rows from Stage 2 (no re-validation, no dedupe) |
+| `data/scoring_input_stage25.csv` | Stage 2.5 — flat scoring-ready CSV compiled from Stage 2 fields |
 | `data/verified_leads.json` | Stage 3 — deduped `VerifiedLead` rows |
 | `data/leads_final.csv` | Stage 4 — up to 10 ranked leads |
+## Stage 2.5 vs Stage 4
+
+- Stage 2.5 **does not** produce final ranking output. It prepares scoring input documents only.
+- Stage 4 computes final `score` and `confidence_score`, applies min-score filtering, ranks candidates, and writes `data/leads_final.csv`.
+- If you run Stage 4 with `--stage4-use-stage25-input`, Stage 4 reads `data/verified_leads_stage25.json` instead of `data/verified_leads.json`.
+
+Examples:
+
+```bash
+# Build stage 2.5 inputs only
+python -m src.main --stage 2.5 --force
+
+# Final scoring from stage 2.5 input
+python -m src.main --stage 4 --stage4-use-stage25-input --force
+
+# Final scoring from validated stage 3 input
+python -m src.main --stage 4 --force
+```
+
 | `data/amazon_books_linkedin.csv` | Optional — `python -m src.csv_linkedin` (LinkdAPI usernames from `amazon_books_titles_authors.csv`) |
 | `logs/run_*.log` | Structured log for each invocation |
 | `logs/summary_*.html` | HTML summary with counts and discard reasons |

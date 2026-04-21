@@ -24,6 +24,7 @@ from src.models import AmazonBook, EnrichedLead, VerifiedLead
 from src.run_report import get_report, reset_report
 from src.stage1_amazon import scrape_all_pools
 from src.stage2_linkedin import enrich_authors
+from src.stage25_compile import SCORING_INPUT_STAGE25_CSV, VERIFIED_LEADS_STAGE25, compile_stage25_inputs
 from src.stage3_validation import validate_and_dedupe
 from src.stage4_scoring import score_and_export
 from src.utils.checkpoint import (
@@ -86,8 +87,8 @@ def _sync_stage1_report(
     )
 
 
-def _require_keys(stages: list[int]) -> None:
-    if not any(s >= 2 for s in stages):
+def _require_keys(stages: list[str]) -> None:
+    if not any(s in {"2", "2.5", "3", "4"} for s in stages):
         return
     env = load_env_settings()
     if not (env.linkdapi_key or "").strip():
@@ -151,6 +152,23 @@ async def _run_stage2(
     return enriched
 
 
+def _run_stage25(enriched: Optional[list[EnrichedLead]], force: bool) -> list[VerifiedLead]:
+    if should_skip_stage(VERIFIED_LEADS_STAGE25, force):
+        loaded = load_list(VERIFIED_LEADS_STAGE25, VerifiedLead) or []
+        typer.echo(f"Stage 2.5 skipped (checkpoint). Loaded {len(loaded)} rows.")
+        return loaded
+    leads = enriched if enriched is not None else load_list(LINKEDIN_MATCHED, EnrichedLead) or []
+    if not leads:
+        typer.echo("Stage 2.5: no enriched leads. Run stage 2 first.", err=True)
+        return []
+    compiled = compile_stage25_inputs(leads)
+    typer.echo(
+        f"Stage 2.5 complete: compiled {len(compiled)} rows to "
+        f"{VERIFIED_LEADS_STAGE25.name} and {SCORING_INPUT_STAGE25_CSV.name}."
+    )
+    return compiled
+
+
 def _run_stage3(enriched: Optional[list[EnrichedLead]], force: bool) -> list[VerifiedLead]:
     if should_skip_stage(VERIFIED_LEADS, force):
         loaded = load_list(VERIFIED_LEADS, VerifiedLead) or []
@@ -166,36 +184,56 @@ def _run_stage3(enriched: Optional[list[EnrichedLead]], force: bool) -> list[Ver
     return verified
 
 
-def _run_stage4(verified: Optional[list[VerifiedLead]]) -> None:
-    v = verified if verified is not None else load_list(VERIFIED_LEADS, VerifiedLead) or []
+def _run_stage4(verified: Optional[list[VerifiedLead]], use_stage25_input: bool = False) -> None:
+    if verified is not None:
+        v = verified
+    else:
+        source = VERIFIED_LEADS_STAGE25 if use_stage25_input else VERIFIED_LEADS
+        v = load_list(source, VerifiedLead) or []
     if not v:
-        typer.echo("Stage 4: no verified leads. Run stage 3 first.", err=True)
+        if use_stage25_input:
+            typer.echo("Stage 4: no stage 2.5 input found. Run stage 2.5 first.", err=True)
+        else:
+            typer.echo("Stage 4: no verified leads. Run stage 3 first.", err=True)
         return
     top = score_and_export(v)
-    typer.echo(f"Stage 4 complete: exported {len(top)} rows to data/leads_final.csv.")
+    origin = "stage 2.5 input" if use_stage25_input and verified is None else "verified leads"
+    typer.echo(f"Stage 4 complete: exported {len(top)} rows to data/leads_final.csv (from {origin}).")
 
 
 async def _run_stages_async(
-    stages: list[int], force: bool, raw_books_file: Path, bundle: SettingsBundle
+    stages: list[str],
+    force: bool,
+    raw_books_file: Path,
+    bundle: SettingsBundle,
+    *,
+    stage4_use_stage25_input: bool = False,
 ) -> None:
     raw: Optional[list[AmazonBook]] = None
     enriched: Optional[list[EnrichedLead]] = None
     verified: Optional[list[VerifiedLead]] = None
 
-    if 1 in stages:
+    if "1" in stages:
         raw = await _run_stage1(force, raw_books_file, bundle)
-    if 2 in stages:
+    if "2" in stages:
         enriched = await _run_stage2(raw, force, raw_books_file)
-    if 3 in stages:
+    if "2.5" in stages:
+        _run_stage25(enriched, force)
+    if "3" in stages:
         verified = _run_stage3(enriched, force)
-    if 4 in stages:
-        _run_stage4(verified)
+    if "4" in stages:
+        _run_stage4(verified, use_stage25_input=stage4_use_stage25_input)
 
 
 def main(
     all_stages: bool = typer.Option(False, "--all", help="Run stages 1 through 4."),
-    stage: Optional[int] = typer.Option(None, "--stage", help="Run a single stage (1-4)."),
+    stage: Optional[str] = typer.Option(None, "--stage", help="Run a single stage (1, 2, 2.5, 3, 4)."),
     force: bool = typer.Option(False, "--force", help="Re-run stage(s) and refresh downstream checkpoints."),
+    stage4_use_stage25_input: bool = typer.Option(
+        False,
+        "--stage4-use-stage25-input",
+        help="For stage 4, read from data/verified_leads_stage25.json instead of data/verified_leads.json.",
+    ),
 ) -> None:
     load_dotenv()
     clear_settings_cache()
@@ -203,22 +241,42 @@ def main(
     log_path = setup_logging()
 
     if not all_stages and stage is None:
-        typer.echo("Specify --all or --stage=1|2|3|4.", err=True)
+        typer.echo("Specify --all or --stage=1|2|2.5|3|4.", err=True)
         raise typer.Exit(code=1)
-    if stage is not None and stage not in (1, 2, 3, 4):
-        typer.echo("--stage must be between 1 and 4.", err=True)
+    if stage is not None and stage not in ("1", "2", "2.5", "3", "4"):
+        typer.echo("--stage must be one of: 1, 2, 2.5, 3, 4.", err=True)
         raise typer.Exit(code=1)
 
-    stages = [1, 2, 3, 4] if all_stages else [int(stage)]
+    stages = ["1", "2", "2.5", "3", "4"] if all_stages else [stage]
     _require_keys(stages)
     bundle = merge_keys_into_bundle(get_settings_bundle(), load_env_settings())
     raw_books_file = amazon_raw_path(bundle.amazon_scraper)
 
     for s in stages:
         if force:
-            clear_downstream_after(s)
+            if s == "1":
+                clear_downstream_after(1)
+            elif s == "2":
+                clear_downstream_after(2)
+            elif s == "2.5":
+                # stage 2.5 only compiles from stage 2; do not delete stage 3/4 checkpoints.
+                for p in (VERIFIED_LEADS_STAGE25, SCORING_INPUT_STAGE25_CSV):
+                    if p.exists():
+                        p.unlink()
+            elif s == "3":
+                clear_downstream_after(3)
+            elif s == "4":
+                clear_downstream_after(4)
 
-    asyncio.run(_run_stages_async(stages, force, raw_books_file, bundle))
+    asyncio.run(
+        _run_stages_async(
+            stages,
+            force,
+            raw_books_file,
+            bundle,
+            stage4_use_stage25_input=stage4_use_stage25_input,
+        )
+    )
 
     summary_path = get_report().write_html(_project_root(), log_path=str(log_path))
     typer.echo(f"Summary written to {summary_path}")
