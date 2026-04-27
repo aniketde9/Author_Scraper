@@ -1,4 +1,8 @@
-"""Stage 1.5: discover publicly listed emails from Amazon + author websites."""
+"""Legacy Stage 1.5: Amazon/DDG email crawl (unused by CLI).
+
+Contact enrichment runs as **Stage 2.1** after LinkedIn enrichment; see ``stage21_linkedin_email.py``.
+This module is kept for reference or ad-hoc imports.
+"""
 
 from __future__ import annotations
 
@@ -32,9 +36,8 @@ AMAZON_HOST_FRAGMENTS = ("amazon.", "amzn.")
 SKIP_CRAWL_HOST_FRAGMENTS = (
     "amazon.",
     "amzn.",
-    "google.",
-    "gstatic.",
-    "facebook.",
+    "qualtrics.",
+    "audible.",
     "twitter.",
     "x.com",
     "linkedin.",
@@ -60,6 +63,14 @@ def _should_skip_crawl_host(url: str) -> bool:
 def _is_amazon_url(url: str) -> bool:
     h = (hostname_from_url(url) or "").lower()
     return any(x in h for x in AMAZON_HOST_FRAGMENTS)
+
+
+def _is_blocked_guess_domain(domain: str | None) -> bool:
+    d = (domain or "").strip().lower().removeprefix("www.")
+    if not d:
+        return True
+    blocked = ("amazon.", "amzn.", "qualtrics.", "audible.")
+    return any(x in d for x in blocked)
 
 
 def _jitter(cfg: EmailEnrichmentConfig) -> float:
@@ -226,7 +237,8 @@ def _registrable_domain_from_site(site_url: str | None) -> str | None:
     h = hostname_from_url(site_url or "")
     if not h:
         return None
-    return h.removeprefix("www.")
+    d = h.removeprefix("www.")
+    return None if _is_blocked_guess_domain(d) else d
 
 
 async def _try_guessed_emails(

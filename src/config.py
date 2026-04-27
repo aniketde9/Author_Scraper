@@ -130,7 +130,7 @@ class ScoringConfig(BaseModel):
 
 
 class EmailEnrichmentConfig(BaseModel):
-    """Stage 1.5: public email discovery from Amazon + author sites (no paid APIs)."""
+    """Email enrichment: Stage 2.1 uses LinkedIn profile context; YAML may still list legacy Stage 1.5 knobs."""
 
     enabled: bool = True
     use_headless: bool = True
@@ -152,6 +152,8 @@ class EmailEnrichmentConfig(BaseModel):
     reactor_list_update_interval_seconds: float = 604_800.0
     reactor_cache_db: str = ""
     reactor_list_dir: str = ""
+    # Stage 2.1: max SMTP probes per lead (guess list may be longer; probes stop here)
+    stage21_max_smtp_probes_per_lead: int = 16
 
 
 class AppSettings(BaseSettings):

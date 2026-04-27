@@ -46,9 +46,10 @@ pipeline:
   categories:
     - "Business & Economics"
 
-# Stage 1.5: optional public email enrichment (run with --stage 1.5 or --stage 1,1.5)
+# Stage 2.1: email/website from LinkedIn profile (run after stage 2: --stage 2,2.1)
 email_enrichment:
   enabled: true
+  stage21_max_smtp_probes_per_lead: 16
   use_headless: true
   concurrency: 2
   delay_seconds_min: 2.0

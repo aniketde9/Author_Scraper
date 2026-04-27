@@ -96,6 +96,8 @@ class EmailTruthReactor:
         list_update_interval_seconds: float = 7 * 86400,
         smtp_timeout: float = 15.0,
         smtp_catchall_timeout: float = 12.0,
+        smtp_greylist_wait: bool = True,
+        smtp_catchall_probe: bool = True,
     ) -> None:
         paths = default_reactor_paths()
         self._cache_db = (cache_db or paths.cache_db).resolve()
@@ -103,6 +105,8 @@ class EmailTruthReactor:
         self._list_update_interval = list_update_interval_seconds
         self._smtp_timeout = smtp_timeout
         self._catchall_timeout = smtp_catchall_timeout
+        self._smtp_greylist_wait = smtp_greylist_wait
+        self._smtp_catchall_probe = smtp_catchall_probe
         self._init_db()
         self._disposable_path = self._download_list(DISPOSABLE_URL, "disposable.txt")
         self._role_path = self._download_list(ROLE_URL, "role.txt")
@@ -442,7 +446,13 @@ class EmailTruthReactor:
         out.smtp_code = code
         out.smtp_message = (msg or "")[:500]
         out.smtp_duration_sec = duration
-        if code is not None and 400 <= code < 500 and cache and cache.get("greylist_delay"):
+        if (
+            self._smtp_greylist_wait
+            and code is not None
+            and 400 <= code < 500
+            and cache
+            and cache.get("greylist_delay")
+        ):
             delay = float(cache["greylist_delay"] or 45.0)
             log.info("reactor_greylist_wait", seconds=delay, mx=primary_mx)
             time.sleep(delay + random.uniform(0, 10.0))
@@ -452,7 +462,16 @@ class EmailTruthReactor:
             out.smtp_duration_sec = duration
 
         try:
-            deep = self._probe_catch_all_and_seg(primary_mx, domain, normalized, self._catchall_timeout)
+            if self._smtp_catchall_probe:
+                deep = self._probe_catch_all_and_seg(primary_mx, domain, normalized, self._catchall_timeout)
+            else:
+                deep = {
+                    "catch_all_rate": 0.25,
+                    "is_catch_all": False,
+                    "is_seg_like": False,
+                    "timing_variance": 0.0,
+                    "results": [],
+                }
         except Exception as e:
             log.warning("reactor_catchall_probe_failed", error=str(e), mx=primary_mx)
             deep = {

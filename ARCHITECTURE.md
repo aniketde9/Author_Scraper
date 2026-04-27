@@ -17,6 +17,8 @@ flowchart TD
     B --> C[data/amazon_raw.json]
     C --> D[Stage2_LinkedIn_LinkdAPI]
     D --> E[data/linkedin_matched.json]
+    E --> E21[Stage2.1_LinkedIn_email_Reactor]
+    E21 --> E
     E --> F[Stage3_Validation]
     F --> G[data/verified_leads.json]
     G --> H[Stage4_Scoring]
@@ -47,6 +49,7 @@ One-time: `playwright install chromium`
 - `src/stage2_linkedin.py` — LinkdAPI search + fuzzy match + full profile
 - `src/stage3_validation.py` — Amazon re-fetch (Playwright sync), LinkedIn URL check, dedupe
 - `src/stage4_scoring.py` — 0–8 scoring, top 10 CSV
+- `src/stage21_linkedin_email.py` — Stage 2.1: LinkedIn profile domains + Truth Reactor → updates `linkedin_matched.json`
 - `src/main.py` — Typer CLI `--all`, `--stage`, `--force`
 
 ## Configuration (`amazon_scraper`)

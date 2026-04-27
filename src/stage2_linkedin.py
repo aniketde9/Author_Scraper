@@ -287,7 +287,7 @@ async def enrich_authors(raw_books: list[AmazonBook]) -> list[EnrichedLead]:
                             em_line += f" conf={book.scraped_email_confidence}"
                         if book.scraped_email_reactor_category:
                             em_line += f" cat={book.scraped_email_reactor_category}"
-                        notes_parts.append(f"stage15_email={em_line}")
+                        notes_parts.append(f"book_scraped_email={em_line}")
                     chosen = EnrichedLead(
                         book=book,
                         linkedin_url=f"https://www.linkedin.com/in/{username}/",

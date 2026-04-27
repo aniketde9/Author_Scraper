@@ -36,11 +36,11 @@ from src.utils.checkpoint import (
     save_list,
     should_skip_stage,
     should_skip_stage1,
-    should_skip_stage15,
+    should_skip_stage21,
     stage1_meta_path,
     stage1_search_fingerprint,
     write_stage1_checkpoint_meta,
-    write_stage15_checkpoint_meta,
+    write_stage21_checkpoint_meta,
 )
 
 
@@ -89,7 +89,7 @@ def _sync_stage1_report(
     )
 
 
-STAGE_ORDER = ["1", "1.5", "2", "2.5", "3", "4"]
+STAGE_ORDER = ["1", "2", "2.1", "2.5", "3", "4"]
 ALLOWED_STAGES = frozenset(STAGE_ORDER)
 
 
@@ -150,39 +150,6 @@ async def _run_stage1(force: bool, raw_books_file: Path, bundle: SettingsBundle)
     return books
 
 
-async def _run_stage15(
-    force: bool,
-    raw_books_file: Path,
-    bundle: SettingsBundle,
-    raw: Optional[list[AmazonBook]],
-) -> list[AmazonBook]:
-    if not bundle.email_enrichment.enabled:
-        typer.echo("Stage 1.5 skipped — email_enrichment.enabled is false in config.")
-        return raw if raw is not None else (load_list(raw_books_file, AmazonBook) or [])
-    if should_skip_stage15(raw_books_file, force, bundle):
-        loaded = load_list(raw_books_file, AmazonBook) or []
-        typer.echo(
-            f"Stage 1.5 skipped — {raw_books_file.stem}.email_meta.json matches current "
-            f"Stage 1 file + email settings. Loaded {len(loaded)} books. "
-            "Use --stage 1.5 --force to re-run."
-        )
-        return loaded
-    books = raw if raw is not None else load_list(raw_books_file, AmazonBook) or []
-    if not books:
-        typer.echo("Stage 1.5: no Amazon books found. Run stage 1 first.", err=True)
-        return []
-    from src.stage15_email import enrich_books_with_public_email
-
-    enriched = await enrich_books_with_public_email(books, bundle)
-    save_list(raw_books_file, enriched)
-    write_stage15_checkpoint_meta(raw_books_file, bundle)
-    typer.echo(
-        f"Stage 1.5 complete: wrote public-email fields to {raw_books_file.name} "
-        f"({len(enriched)} books)."
-    )
-    return enriched
-
-
 async def _run_stage2(
     raw: Optional[list[AmazonBook]], force: bool, raw_books_file: Path
 ) -> list[EnrichedLead]:
@@ -198,6 +165,37 @@ async def _run_stage2(
     save_list(LINKEDIN_MATCHED, enriched)
     typer.echo(f"Stage 2 complete: {len(enriched)} enriched leads.")
     return enriched
+
+
+async def _run_stage21(
+    force: bool,
+    bundle: SettingsBundle,
+    enriched: Optional[list[EnrichedLead]],
+) -> list[EnrichedLead]:
+    if not bundle.email_enrichment.enabled:
+        typer.echo("Stage 2.1 skipped — email_enrichment.enabled is false in config.")
+        return enriched if enriched is not None else (load_list(LINKEDIN_MATCHED, EnrichedLead) or [])
+    if should_skip_stage21(LINKEDIN_MATCHED, force, bundle):
+        loaded = load_list(LINKEDIN_MATCHED, EnrichedLead) or []
+        typer.echo(
+            f"Stage 2.1 skipped — {LINKEDIN_MATCHED.stem}.stage21_meta.json matches current "
+            f"LinkedIn file + email settings. Loaded {len(loaded)} leads. "
+            "Use --stage 2.1 --force to re-run."
+        )
+        return loaded
+    leads = enriched if enriched is not None else load_list(LINKEDIN_MATCHED, EnrichedLead) or []
+    if not leads:
+        typer.echo("Stage 2.1: no enriched leads. Run stage 2 first.", err=True)
+        return []
+    from src.stage21_linkedin_email import enrich_leads_from_linkedin
+
+    out = await enrich_leads_from_linkedin(leads, bundle)
+    save_list(LINKEDIN_MATCHED, out)
+    write_stage21_checkpoint_meta(LINKEDIN_MATCHED, bundle)
+    typer.echo(
+        f"Stage 2.1 complete: wrote contact enrichment to {LINKEDIN_MATCHED.name} ({len(out)} leads)."
+    )
+    return out
 
 
 def _run_stage25(enriched: Optional[list[EnrichedLead]], force: bool) -> list[VerifiedLead]:
@@ -263,10 +261,10 @@ async def _run_stages_async(
 
     if "1" in stages:
         raw = await _run_stage1(force, raw_books_file, bundle)
-    if "1.5" in stages:
-        raw = await _run_stage15(force, raw_books_file, bundle, raw)
     if "2" in stages:
         enriched = await _run_stage2(raw, force, raw_books_file)
+    if "2.1" in stages:
+        enriched = await _run_stage21(force, bundle, enriched)
     if "2.5" in stages:
         _run_stage25(enriched, force)
     if "3" in stages:
@@ -276,11 +274,11 @@ async def _run_stages_async(
 
 
 def main(
-    all_stages: bool = typer.Option(False, "--all", help="Run stages 1 through 4 (not 1.5)."),
+    all_stages: bool = typer.Option(False, "--all", help="Run stages 1, 2, 2.1, 2.5, 3, 4."),
     stages_csv: str = typer.Option(
         "",
         "--stage",
-        help="Run stage(s): 1, 1.5, 2, 2.5, 3, 4. Comma-separated, e.g. 1,1.5,2 (omit when using --all).",
+        help="Run stage(s): 1, 2, 2.1, 2.5, 3, 4. Comma-separated, e.g. 1,2,2.1 (omit when using --all).",
     ),
     force: bool = typer.Option(False, "--force", help="Re-run stage(s) and refresh downstream checkpoints."),
     stage4_use_stage25_input: bool = typer.Option(
@@ -298,7 +296,7 @@ def main(
         typer.echo(f"Specify --all or --stage=... (allowed: {', '.join(STAGE_ORDER)}).", err=True)
         raise typer.Exit(code=1)
     if all_stages:
-        stages = ["1", "2", "2.5", "3", "4"]
+        stages = ["1", "2", "2.1", "2.5", "3", "4"]
     else:
         stages = _parse_stages(stages_csv.strip())
     _require_keys(stages)
@@ -309,10 +307,10 @@ def main(
         if force:
             if s == "1":
                 clear_downstream_after("1", raw_books_path=raw_books_file)
-            elif s == "1.5":
-                clear_downstream_after("1.5", raw_books_path=raw_books_file)
             elif s == "2":
                 clear_downstream_after("2", raw_books_path=raw_books_file)
+            elif s == "2.1":
+                clear_downstream_after("2.1", raw_books_path=raw_books_file)
             elif s == "2.5":
                 # stage 2.5 only compiles from stage 2; do not delete stage 3/4 checkpoints.
                 for p in (VERIFIED_LEADS_STAGE25, SCORING_INPUT_STAGE25_CSV):
