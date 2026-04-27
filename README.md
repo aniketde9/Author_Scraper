@@ -12,7 +12,7 @@ Python 3.12+ pipeline that discovers Amazon book listings (Playwright + [playwri
    playwright install chromium
    ```
 
-3. Copy `.env.example` to `.env` and set `LINKDAPI_KEY` ([LinkdAPI](https://linkdapi.com) — free credits on signup). Stage 1 (Amazon only) does not need this key; stages 2–4 do.
+3. Copy `.env.example` to `.env` and set `LINKDAPI_KEY` ([LinkdAPI](https://linkdapi.com) — free credits on signup). Stage 1 (Amazon only) and optional Stage 1.5 (public email discovery) do not need this key; stages 2–4 do.
 
 4. Tune `config/config.yaml` (`amazon_scraper` delays/viewport, pipeline thresholds, categories, scoring).
 
@@ -31,6 +31,22 @@ python -m src.main --stage 2
 python -m src.main --stage 2.5
 python -m src.main --stage 4 --stage4-use-stage25-input
 ```
+
+Run multiple stages in one invocation (comma-separated, executed in pipeline order):
+
+```bash
+python -m src.main --stage 1,1.5,2
+```
+
+### Stage 1.5 — public email enrichment (optional)
+
+After Stage 1, Stage 1.5 crawls each book’s Amazon/author pages and optional DuckDuckGo results to find **publicly published** emails, then writes them onto the same `AmazonBook` JSON (`scraped_public_email`, `scraped_email_status`, etc.). Stage 2 prefers LinkdAPI contact info when present, otherwise falls back to these fields.
+
+- Configure under `email_enrichment` in `config/config.yaml` (delays, concurrency, toggles). Set `enabled: false` to skip.
+- **Not** included in `--all` by default (adds significant runtime and outbound requests). Run explicitly as shown above.
+- Checkpoint: `data/<stem>.email_meta.json` (fingerprint of Stage 1 file + email settings). Use `--stage 1.5 --force` to re-run discovery.
+- **Domain guessing (`use_domain_guess`):** If there is no **personal** address on crawled pages (or only generic inboxes like `info@`), the pipeline may build common `local@author-domain` patterns and require a DuckDuckGo snippet hit before keeping a candidate. Those rows are marked **`unverified`** with reason `ddg_guess_hit+mx` or `ddg_guess_hit+no_mx` — not proof the mailbox exists or belongs to the author; use only where appropriate.
+- **Ethics / compliance:** Use only for legitimate outreach; respect site terms and `robots.txt`; this stage does not bypass logins or paywalls. It performs DNS MX checks only (no SMTP “ping”).
 
 Recommended stage flows:
 
@@ -58,8 +74,9 @@ Requires `LINKDAPI_KEY`. Use `--force` if an older output file lacks columns `ur
 
 | Artifact | Description |
 |----------|-------------|
-| `data/amazon_raw.json` (config: `amazon_scraper.raw_books_json`) | Stage 1 — parsed `AmazonBook` rows |
+| `data/amazon_raw.json` (config: `amazon_scraper.raw_books_json`) | Stage 1 — parsed `AmazonBook` rows (Stage 1.5 may add `scraped_*` fields in place) |
 | `data/<stem>.meta.json` (e.g. `amazon_raw.meta.json`) | Stage 1 — fingerprint of search/filter config; if you change `config.yaml` and this no longer matches, Stage 1 re-scrapes automatically (unless you only have an old JSON with no meta — then it re-scrapes once). `--force` always re-scrapes. |
+| `data/<stem>.email_meta.json` (e.g. `amazon_raw.email_meta.json`) | Stage 1.5 — fingerprint of `email_enrichment` settings + Stage 1 JSON bytes; mismatch triggers re-enrichment (unless `--force`). |
 | `data/linkedin_matched.json` | Stage 2 — `EnrichedLead` rows |
 | `data/verified_leads_stage25.json` | Stage 2.5 — compiled `VerifiedLead`-shape rows from Stage 2 (no re-validation, no dedupe) |
 | `data/scoring_input_stage25.csv` | Stage 2.5 — flat scoring-ready CSV compiled from Stage 2 fields |

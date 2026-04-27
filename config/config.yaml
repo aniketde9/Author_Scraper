@@ -10,7 +10,7 @@ amazon_scraper:
   viewport_width_range: [1280, 1440]
   viewport_height_range: [820, 980]
   human_scroll_steps: 4
-  # Narrow terms so searches stay entrepreneurship-themed (category is already Entrepreneurship)
+  # Narrow terms; Stage 1 builds queries like "{category} {keyword} book author"
   pool_a_keywords: ["entrepreneurship", "startup", "founder", "small business", "scaling a business"]
   pool_b_keywords: ["pre-order", "coming soon", "launching soon"]
 
@@ -44,7 +44,31 @@ pipeline:
     - "paranormal"
     - "dystopian"
   categories:
-    - "Entrepreneurship"
+    - "Business & Economics"
+
+# Stage 1.5: optional public email enrichment (run with --stage 1.5 or --stage 1,1.5)
+email_enrichment:
+  enabled: true
+  use_headless: true
+  concurrency: 2
+  delay_seconds_min: 2.0
+  delay_seconds_max: 4.5
+  navigation_timeout_ms: 25000
+  max_urls_per_author: 8
+  max_ddg_results: 6
+  use_author_central: true
+  use_ddg_fallback: true
+  # If no personal email on site (or only info@/hello@), try local-part patterns + DDG snippet hit (unverified).
+  use_domain_guess: true
+  guess_max_patterns: 8
+  guess_max_ddg_results: 3
+  # Truth Reactor: set smtp_verification_enabled false if outbound SMTP is blocked
+  smtp_verification_enabled: true
+  smtp_timeout_seconds: 15.0
+  smtp_catchall_timeout_seconds: 12.0
+  reactor_list_update_interval_seconds: 604800
+  reactor_cache_db: ""
+  reactor_list_dir: ""
 
 scoring:
   profession:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypeVar
 
@@ -28,6 +29,51 @@ def amazon_raw_path(amazon: AmazonScraperConfig) -> Path:
 def stage1_meta_path(raw_books: Path) -> Path:
     """Sidecar written next to the Stage 1 JSON (e.g. amazon_raw.meta.json)."""
     return raw_books.parent / f"{raw_books.stem}.meta.json"
+
+
+def stage15_meta_path(raw_books: Path) -> Path:
+    """Sidecar for Stage 1.5 email enrichment (e.g. amazon_raw.email_meta.json)."""
+    return raw_books.parent / f"{raw_books.stem}.email_meta.json"
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def stage15_enrichment_fingerprint(bundle: SettingsBundle, raw_path: Path) -> str:
+    """Hash of email-enrichment settings + Stage 1 JSON bytes (invalidates on new scrape)."""
+    ee = bundle.email_enrichment.model_dump(mode="json")
+    stage1_sha = _sha256_file(raw_path) if raw_path.exists() and raw_path.stat().st_size > 0 else ""
+    payload = {"email_enrichment": ee, "stage1_sha256": stage1_sha}
+    canonical = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def should_skip_stage15(raw_path: Path, force: bool, bundle: SettingsBundle) -> bool:
+    if not bundle.email_enrichment.enabled:
+        return True
+    if force:
+        return False
+    if not raw_path.exists() or raw_path.stat().st_size == 0:
+        return False
+    meta_path = stage15_meta_path(raw_path)
+    if not meta_path.exists():
+        return False
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        return meta.get("fingerprint") == stage15_enrichment_fingerprint(bundle, raw_path)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return False
+
+
+def write_stage15_checkpoint_meta(raw_path: Path, bundle: SettingsBundle) -> None:
+    meta_path = stage15_meta_path(raw_path)
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    body = {
+        "fingerprint": stage15_enrichment_fingerprint(bundle, raw_path),
+        "written_at": datetime.now(timezone.utc).isoformat(),
+    }
+    meta_path.write_text(json.dumps(body, indent=2), encoding="utf-8")
 
 
 def stage1_search_fingerprint(bundle: SettingsBundle) -> str:
@@ -74,8 +120,6 @@ def should_skip_stage1(raw_path: Path, force: bool, bundle: SettingsBundle) -> b
 
 
 def write_stage1_checkpoint_meta(raw_path: Path, bundle: SettingsBundle) -> None:
-    from datetime import datetime, timezone
-
     meta_path = stage1_meta_path(raw_path)
     meta_path.parent.mkdir(parents=True, exist_ok=True)
     body = {
@@ -105,14 +149,24 @@ def should_skip_stage(output_path: Path, force: bool) -> bool:
     return (not force) and output_path.exists() and output_path.stat().st_size > 0
 
 
-def clear_downstream_after(stage: int) -> None:
-    """Remove checkpoint files for stages after `stage` (1-indexed)."""
-    mapping = {
-        1: [LINKEDIN_MATCHED, VERIFIED_LEADS, LEADS_FINAL_CSV],
-        2: [VERIFIED_LEADS, LEADS_FINAL_CSV],
-        3: [LEADS_FINAL_CSV],
-        4: [],
-    }
-    for p in mapping.get(stage, []):
+def clear_downstream_after(stage: str, *, raw_books_path: Path | None = None) -> None:
+    """Remove checkpoint files for stages at or after `stage` (string: 1, 1.5, 2, 3, 4)."""
+    if stage == "1":
+        if raw_books_path is not None:
+            mp = stage15_meta_path(raw_books_path)
+            if mp.exists():
+                mp.unlink()
+        paths = [LINKEDIN_MATCHED, VERIFIED_LEADS, LEADS_FINAL_CSV]
+    elif stage == "1.5":
+        paths = [LINKEDIN_MATCHED, VERIFIED_LEADS, LEADS_FINAL_CSV]
+    elif stage == "2":
+        paths = [VERIFIED_LEADS, LEADS_FINAL_CSV]
+    elif stage == "3":
+        paths = [LEADS_FINAL_CSV]
+    elif stage == "4":
+        paths = []
+    else:
+        paths = []
+    for p in paths:
         if p.exists():
             p.unlink()

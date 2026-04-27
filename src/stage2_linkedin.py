@@ -16,6 +16,7 @@ from src.run_report import get_report
 from src.utils.fuzzy_match import book_title_in_profile
 from src.utils.linkdapi_client import LinkdAPIWrapper
 from src.utils.paying_capacity import analyze_paying_capacity
+from src.utils.validators import email_domain_matches_website
 
 log = structlog.get_logger(__name__)
 LINKEDIN_IN_RE = re.compile(r"https?://(?:[\w.-]+\.)?linkedin\.com/in/([^/?#]+)", re.IGNORECASE)
@@ -247,7 +248,23 @@ async def enrich_authors(raw_books: list[AmazonBook]) -> list[EnrichedLead]:
                     blob = _extract_profile_blob(profile_obj)
                     title_match = book_title_in_profile(book.title, blob)
                     email, website = _extract_contact(profile_obj)
-                    method = "email" if email else ("website" if website else "linkedin_dm")
+                    contact_email = email or book.scraped_public_email
+                    if email:
+                        contact_website = website
+                    else:
+                        contact_website = book.scraped_public_website or website
+                    if contact_email and contact_website and not email_domain_matches_website(
+                        contact_email, contact_website
+                    ):
+                        contact_website = None
+                    if email:
+                        method = "email"
+                    elif book.scraped_public_email:
+                        method = "scraped_public_email"
+                    elif website or book.scraped_public_website:
+                        method = "website"
+                    else:
+                        method = "linkedin_dm"
                     company = _extract_company(profile_obj)
                     location = _extract_location(profile_obj)
                     follower_count = profile_obj.get("followerCount") if isinstance(profile_obj.get("followerCount"), int) else None
@@ -264,6 +281,13 @@ async def enrich_authors(raw_books: list[AmazonBook]) -> list[EnrichedLead]:
                         "source=chromium_google_search+linkdapi_confirm",
                         f"query={query[:80]}",
                     ]
+                    if book.scraped_public_email:
+                        em_line = f"{book.scraped_public_email}({book.scraped_email_status})"
+                        if book.scraped_email_confidence is not None:
+                            em_line += f" conf={book.scraped_email_confidence}"
+                        if book.scraped_email_reactor_category:
+                            em_line += f" cat={book.scraped_email_reactor_category}"
+                        notes_parts.append(f"stage15_email={em_line}")
                     chosen = EnrichedLead(
                         book=book,
                         linkedin_url=f"https://www.linkedin.com/in/{username}/",
@@ -276,8 +300,8 @@ async def enrich_authors(raw_books: list[AmazonBook]) -> list[EnrichedLead]:
                         profession_tier=ProfessionTier.NONE,
                         profile_text_blob=blob,
                         fuzzy_title_score=float(title_match),
-                        contact_email=email,
-                        contact_website=website,
+                        contact_email=contact_email,
+                        contact_website=contact_website,
                         contact_method=method,
                         raw_profile=full if isinstance(full, dict) else {},
                         notes="; ".join(notes_parts),

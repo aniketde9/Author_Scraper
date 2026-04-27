@@ -129,6 +129,31 @@ class ScoringConfig(BaseModel):
     visibility: ScoringVisibilityWeights = Field(default_factory=ScoringVisibilityWeights)
 
 
+class EmailEnrichmentConfig(BaseModel):
+    """Stage 1.5: public email discovery from Amazon + author sites (no paid APIs)."""
+
+    enabled: bool = True
+    use_headless: bool = True
+    concurrency: int = 2
+    delay_seconds_min: float = 2.0
+    delay_seconds_max: float = 4.5
+    navigation_timeout_ms: int = 25_000
+    max_urls_per_author: int = 8
+    max_ddg_results: int = 6
+    use_author_central: bool = True
+    use_ddg_fallback: bool = True
+    use_domain_guess: bool = True
+    guess_max_patterns: int = 8
+    guess_max_ddg_results: int = 3
+    # Email Truth Reactor (SMTP + DNS + local lists)
+    smtp_verification_enabled: bool = True
+    smtp_timeout_seconds: float = 15.0
+    smtp_catchall_timeout_seconds: float = 12.0
+    reactor_list_update_interval_seconds: float = 604_800.0
+    reactor_cache_db: str = ""
+    reactor_list_dir: str = ""
+
+
 class AppSettings(BaseSettings):
     """Secrets from environment."""
 
@@ -146,6 +171,7 @@ class SettingsBundle(BaseModel):
     linkdapi: LinkdAPIConfig
     pipeline: PipelineConfig
     scoring: ScoringConfig
+    email_enrichment: EmailEnrichmentConfig = Field(default_factory=EmailEnrichmentConfig)
 
 
 def _normalize_pipeline(raw: dict[str, Any]) -> dict[str, Any]:
@@ -184,6 +210,7 @@ def get_settings_bundle(config_path: str | None = None) -> SettingsBundle:
         linkdapi=LinkdAPIConfig(**data.get("linkdapi", {})),
         pipeline=PipelineConfig(**pipeline_raw),
         scoring=ScoringConfig(**data.get("scoring", {})),
+        email_enrichment=EmailEnrichmentConfig(**data.get("email_enrichment", {})),
     )
 
 

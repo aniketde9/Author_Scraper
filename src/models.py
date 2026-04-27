@@ -27,6 +27,14 @@ class VisibilityBand(StrEnum):
     HIGH = "high"
 
 
+class ScrapedEmailStatus(StrEnum):
+    VERIFIED = "verified"
+    RISKY = "risky"
+    INVALID = "invalid"
+    UNVERIFIED = "unverified"
+    NOT_FOUND = "not_found"
+
+
 class AmazonBook(BaseModel):
     asin: str
     title: str
@@ -37,6 +45,15 @@ class AmazonBook(BaseModel):
     publish_date: date | None = None
     is_preorder: bool = False
     raw_snippet: str | None = None
+    scraped_public_email: str | None = None
+    scraped_email_status: ScrapedEmailStatus | None = None
+    scraped_email_reason: str = ""
+    scraped_email_sources: list[str] = Field(default_factory=list)
+    scraped_email_confidence: float | None = None
+    scraped_email_confidence_range: str = ""
+    scraped_email_reactor_category: str = ""
+    scraped_email_smtp_ok: bool | None = None
+    scraped_public_website: str | None = None
 
 
 class EnrichedLead(BaseModel):
