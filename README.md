@@ -18,25 +18,27 @@ Python 3.12+ pipeline that discovers Amazon book listings (Playwright + [playwri
 
 ## Usage
 
-Full pipeline (checkpoints under `data/`, logs under `logs/`):
+Primary run order (recommended):
+
+1) **Stage 1** — Amazon book scrape  
+2) **Stage 2** — LinkedIn enrichment  
+3) **Stage 2.1** — LinkedIn-aware email enrichment  
+4) **Stage 2.5** — compile scoring-ready artifacts
 
 ```bash
-python -m src.main --all
+python -m src.main --stage 1 --force
+python -m src.main --stage 2 --force
+python -m src.main --stage 2.1 --force
+python -m src.main --stage 2.5 --force
 ```
 
-Run a single stage (earlier stages load from checkpoint when present):
+Or run those four stages in one command:
 
 ```bash
-python -m src.main --stage 2
-python -m src.main --stage 2.5
-python -m src.main --stage 4 --stage4-use-stage25-input
+python -m src.main --stage 1,2,2.1,2.5 --force
 ```
 
-Run multiple stages in one invocation (comma-separated, executed in pipeline order):
-
-```bash
-python -m src.main --stage 1,2,2.1
-```
+> Every other stage is optional (see below).
 
 ### Stage 2.1 — LinkedIn-aware email enrichment (optional)
 
@@ -47,10 +49,15 @@ After Stage 2, Stage 2.1 reads **`data/linkedin_matched.json`**, derives candida
 - Checkpoint: **`data/linkedin_matched.stage21_meta.json`** (fingerprint of `linkedin_matched.json` + email settings). Use `--stage 2.1 --force` to re-run.
 - **Ethics / compliance:** Use only for legitimate outreach; SMTP verification sends real RCPT probes — use appropriate timeouts and volume.
 
-Recommended stage flows:
+Optional stages:
 
-- Standard validated path: `2 -> 3 -> 4`
-- Fast scoring path (skip stage 3 validation): `2 -> 2.5 -> 4 --stage4-use-stage25-input`
+- **Stage 3** — extra validation + dedupe (`data/verified_leads.json`)
+- **Stage 4** — final scoring/ranking (`data/leads_final.csv`)
+
+Optional stage flows:
+
+- Standard validated path: `1 -> 2 -> 2.1 -> 3 -> 4`
+- Fast scoring path (skip stage 3 validation): `1 -> 2 -> 2.1 -> 2.5 -> 4 --stage4-use-stage25-input`
 
 Force re-run a stage and invalidate downstream artifacts:
 
