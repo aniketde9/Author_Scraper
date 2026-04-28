@@ -3,7 +3,9 @@ amazon_scraper:
   # Stage 1 writes data/<basename> — overwritten on each Stage 1 run (use --force to re-scrape)
   raw_books_json: "amazon_raw.json"
   amazon_base: "https://www.amazon.com"
+  start_page: 1
   max_pages_per_pool: 10
+  end_page: null
   delay_between_pages: 12
   delay_between_requests: 3.0
   use_headless: true

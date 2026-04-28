@@ -40,6 +40,12 @@ python -m src.main --stage 1,2,2.1,2.5 --force
 
 > Every other stage is optional (see below).
 
+Stage 1 supports a custom page window at runtime:
+
+```bash
+python -m src.main --stage 1 --force --stage1-start-page 11 --stage1-end-page 20
+```
+
 ### Stage 2.1 — LinkedIn-aware email enrichment (optional)
 
 After Stage 2, Stage 2.1 reads **`data/linkedin_matched.json`**, derives candidate mail domains from LinkedIn profile data (job-description emails, company slug + MX heuristics), optionally uses LinkdAPI `contactInfo` when present, runs **personal local-part guesses** and the **Truth Reactor** (DNS/SMTP), then updates each lead’s **`contact_email`**, **`contact_website`**, nested **`book.scraped_*`** fields, and **`notes`**.

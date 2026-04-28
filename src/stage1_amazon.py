@@ -281,13 +281,24 @@ async def scrape_all_pools() -> list[AmazonBook]:
     non_fic_include = p.non_fiction_include_keywords
     non_fic_exclude = p.non_fiction_exclude_keywords
     non_fiction_gate_enabled = p.non_fiction_gate_enabled
+    start_page = max(1, int(amz.start_page))
+    end_page = int(amz.end_page) if amz.end_page is not None else int(amz.max_pages_per_pool)
+    if end_page < start_page:
+        log.warning(
+            "stage1_invalid_page_window",
+            start_page=start_page,
+            end_page=end_page,
+            note="No pages processed because end_page < start_page",
+        )
+        report.set_stage_count("stage1_amazon", 0)
+        return []
 
     async with amazon_browser_session(amz) as (_browser, page):
         for category in p.categories:
             kw_pool_a = [f"{category} {k} book author" for k in amz.pool_a_keywords]
             kw_pool_b = [f"{category} {k} book author" for k in amz.pool_b_keywords]
             search_plans = [(kw, "review-rank") for kw in kw_pool_a] + [(kw, "date-desc-rank") for kw in kw_pool_b]
-            for page_num in range(1, amz.max_pages_per_pool + 1):
+            for page_num in range(start_page, end_page + 1):
                 rows: list[dict] = []
                 saw_block = False
                 for kw, sort_key in search_plans:

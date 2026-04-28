@@ -45,7 +45,9 @@ def load_yaml_config(path: Path | None = None) -> dict[str, Any]:
 class AmazonScraperConfig(BaseModel):
     mode: str = "playwright"
     amazon_base: str = "https://www.amazon.com"
+    start_page: int = 1
     max_pages_per_pool: int = 12
+    end_page: int | None = None
     delay_between_pages: float = 8.0
     delay_between_requests: float = 2.5
     use_headless: bool = True

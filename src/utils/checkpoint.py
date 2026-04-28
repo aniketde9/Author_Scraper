@@ -124,7 +124,9 @@ def stage1_search_fingerprint(bundle: SettingsBundle) -> str:
     payload = {
         "amazon_scraper": {
             "amazon_base": amz.amazon_base,
+            "start_page": amz.start_page,
             "max_pages_per_pool": amz.max_pages_per_pool,
+            "end_page": amz.end_page,
             "pool_a_keywords": list(amz.pool_a_keywords),
             "pool_b_keywords": list(amz.pool_b_keywords),
             "raw_books_json": amz.raw_books_json,

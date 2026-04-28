@@ -286,6 +286,18 @@ def main(
         "--stage4-use-stage25-input",
         help="For stage 4, read from data/verified_leads_stage25.json instead of data/verified_leads.json.",
     ),
+    stage1_start_page: int = typer.Option(
+        1,
+        "--stage1-start-page",
+        min=1,
+        help="Stage 1 page window start (inclusive).",
+    ),
+    stage1_end_page: int = typer.Option(
+        0,
+        "--stage1-end-page",
+        min=0,
+        help="Stage 1 page window end (inclusive). 0 means use config value (or max_pages_per_pool).",
+    ),
 ) -> None:
     load_dotenv()
     clear_settings_cache()
@@ -301,6 +313,15 @@ def main(
         stages = _parse_stages(stages_csv.strip())
     _require_keys(stages)
     bundle = merge_keys_into_bundle(get_settings_bundle(), load_env_settings())
+    if stage1_start_page > 1 or stage1_end_page > 0:
+        amz_updates = {"start_page": stage1_start_page}
+        if stage1_end_page > 0:
+            amz_updates["end_page"] = stage1_end_page
+        bundle = bundle.model_copy(
+            update={
+                "amazon_scraper": bundle.amazon_scraper.model_copy(update=amz_updates),
+            }
+        )
     raw_books_file = amazon_raw_path(bundle.amazon_scraper)
 
     for s in stages:
